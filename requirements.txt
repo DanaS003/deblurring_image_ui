@@ -1,0 +1,7 @@
+torch
+torchvision
+flask
+gradio
+Pillow
+scikit-image
+numpy
