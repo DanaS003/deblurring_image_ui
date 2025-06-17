@@ -8,10 +8,11 @@ from skimage.metrics import structural_similarity as ssim_metric
 import numpy as np
 import os
 import gradio as gr
+import tempfile # Import tempfile for creating temporary files
+from pathlib import Path # Import Path for better path handling
 
 # --- Definisi Model MIMOUNetPlus ---
-# (Import kelas model sesuai kebutuhan, ini dipersingkat)
-
+# (Pastikan kelas model diimpor atau didefinisikan di sini seperti sebelumnya)
 class BasicConv(nn.Module):
     def __init__(self, in_channel, out_channel, kernel_size, stride, bias=True, norm=False, relu=True, transpose=False):
         super(BasicConv, self).__init__()
@@ -210,6 +211,7 @@ class MIMOUNetPlus(nn.Module):
 
         return outputs
 
+
 # --- Konfigurasi Model ---
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Menggunakan device: {DEVICE}")
@@ -224,8 +226,6 @@ try:
     print(f"Model MIMOUNetPlus berhasil dimuat dari {MODEL_PATH}")
 except Exception as e:
     print(f"Error saat memuat model: {e}")
-    # It's better to raise an error and stop if the model cannot be loaded
-    # or provide a graceful fallback. For a Gradio app, exiting is fine if it's critical.
     raise RuntimeError(f"Failed to load model: {e}")
 
 # --- Transformasi dan Denormalisasi ---
@@ -242,51 +242,51 @@ def denormalize_img(tensor):
 
 # --- PSNR dan SSIM ---
 def calculate_metrics(deblurred_tensor, ground_truth_tensor):
-    # Ensure sizes are compatible
-    # Ground truth might be different size if user uploads arbitrary images
-    if deblurred_tensor.shape[1:] != ground_truth_tensor.shape[1:]: # Check H, W
-        # Resize ground truth to match deblurred output for metric calculation
+    if deblurred_tensor.shape[1:] != ground_truth_tensor.shape[1:]:
         ground_truth_tensor = F.interpolate(
             ground_truth_tensor.unsqueeze(0),
-            size=deblurred_tensor.shape[1:], # Target H, W
+            size=deblurred_tensor.shape[1:],
             mode='bilinear',
             align_corners=False
         ).squeeze(0)
 
-    # Convert to numpy [H, W, C]
     deblur_np = deblurred_tensor.permute(1, 2, 0).cpu().numpy()
     gt_np = ground_truth_tensor.permute(1, 2, 0).cpu().numpy()
 
-    # Convert to 0-255 range if they are floats 0-1, for metrics if necessary,
-    # but skimage metrics can handle 0-1 if data_range is set.
-    # We already clamped to 0-1, so data_range=1 is correct.
     psnr = psnr_metric(gt_np, deblur_np, data_range=1)
     ssim = ssim_metric(gt_np, deblur_np, data_range=1, channel_axis=-1)
     return psnr, ssim
 
-# --- Fungsi Utama ---
+# --- Fungsi Utama yang dimodifikasi untuk output download path ---
 def deblur_image_ui(input_blur_img: Image.Image, ground_truth_img: Image.Image = None):
-    # Apply transformation to input blurred image
     input_tensor = inference_transform(input_blur_img).unsqueeze(0).to(DEVICE)
 
     with torch.no_grad():
-        output = model(input_tensor)[-1] # Take the last output as the final deblurred image
+        output = model(input_tensor)[-1]
 
     output_tensor = denormalize_img(output.squeeze(0))
     output_pil = transforms.ToPILImage()(output_tensor.cpu())
 
     metrics_info = ""
-    # --- Hitung metrik jika Ground Truth diberikan ---
     if ground_truth_img is not None:
         gt_tensor = inference_transform(ground_truth_img).to(DEVICE)
-        gt_tensor = denormalize_img(gt_tensor) # Denormalize GT as well for consistent range
+        gt_tensor = denormalize_img(gt_tensor)
 
         psnr, ssim = calculate_metrics(output_tensor, gt_tensor)
         metrics_info = f"PSNR: {psnr:.2f} dB | SSIM: {ssim:.4f}"
     else:
         metrics_info = "Ground Truth tidak disediakan. PSNR dan SSIM tidak dihitung."
 
-    return output_pil, metrics_info
+    # Save the PIL image to a temporary file
+    # tempfile.NamedTemporaryFile creates a unique file in a temporary directory
+    # delete=False ensures the file is not deleted immediately after closing,
+    # so Gradio can access it.
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
+        output_pil.save(tmp_file.name)
+        temp_filepath = tmp_file.name
+
+    # Return the PIL image for display and the path for download
+    return output_pil, metrics_info, temp_filepath # Now returning the file path
 
 # --- Antarmuka Gradio ---
 title = "✨ Aplikasi Deblur Gambar dengan MIMO-UNetPlus ✨"
@@ -301,24 +301,20 @@ Untuk evaluasi kualitas (PSNR dan SSIM), Anda juga dapat menyediakan gambar taja
 3.  **Klik 'Deblur Gambar':** Tunggu beberapa saat hingga proses selesai.
 4.  **Lihat Hasil:** Gambar yang sudah di-deblur akan ditampilkan di area 'Gambar Hasil Deblurring'.
 5.  **Informasi Metrik:** PSNR dan SSIM akan muncul di bawah hasil deblurring jika Ground Truth disediakan.
+6.  **Unduh Hasil:** Gunakan tombol unduh di bawah gambar hasil untuk menyimpannya.
 """
 
 # Example images for Gradio
-# Ensure 'example_images' directory exists and contains 'blur_example.png' and 'gt_example.png'
-# Create dummy files if they don't exist for demonstration purposes
 if not os.path.exists("example_images"):
     os.makedirs("example_images")
-    # Create dummy blur_example.png
     Image.new('RGB', (256, 256), color = 'red').save("example_images/blur_example.png")
-    # Create dummy gt_example.png
     Image.new('RGB', (256, 256), color = 'blue').save("example_images/gt_example.png")
-
 
 examples = [
     ["example_images/blur_example.png", "example_images/gt_example.png"]
 ]
 
-with gr.Blocks(theme=gr.themes.Soft()) as demo: # Using gr.Blocks for more control over layout and gr.themes.Soft()
+with gr.Blocks(theme=gr.themes.Soft()) as demo:
     gr.Markdown(f"<h1 style='text-align: center;'>{title}</h1>")
     gr.Markdown(description)
 
@@ -327,8 +323,6 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo: # Using gr.Blocks for more contr
             with gr.Column():
                 input_blur_img = gr.Image(type="pil", label="Gambar Buram (Input)", show_label=True)
                 ground_truth_img = gr.Image(type="pil", label="Ground Truth (Opsional)", show_label=True)
-                # You can add more controls here if your model allowed tunable parameters
-                # deblur_strength = gr.Slider(minimum=0.1, maximum=1.0, value=0.7, label="Kekuatan Deblur", interactive=True)
                 
                 with gr.Row():
                     deblur_btn = gr.Button("✨ Deblur Gambar ✨", variant="primary")
@@ -336,22 +330,21 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo: # Using gr.Blocks for more contr
 
             with gr.Column():
                 output_image = gr.Image(type="pil", label="Gambar Hasil Deblurring", show_label=True)
+                # The DownloadButton will now receive a path string
                 download_button = gr.DownloadButton(value="Unduh Hasil", label="Unduh Gambar Deblur", visible=False)
                 metrics_output = gr.Textbox(label="Informasi Metrik", interactive=False)
         
         # Link button to function and update outputs
         deblur_btn.click(
             fn=deblur_image_ui,
-            inputs=[input_blur_img, ground_truth_img], # Add other inputs if you create them
-            outputs=[output_image, metrics_output]
-        ).then( # Chain another function to enable download button after deblurring
-            fn=lambda x: gr.update(value=x, visible=True),
-            inputs=[output_image],
-            outputs=[download_button]
+            inputs=[input_blur_img, ground_truth_img],
+            outputs=[output_image, metrics_output, download_button] # Now also outputting to download_button
         )
-
+        
+        # Modify clear button's behavior to also hide download button
         clear_btn.add([input_blur_img, ground_truth_img, output_image, metrics_output, download_button])
-        clear_btn.click(fn=lambda: gr.update(visible=False), inputs=None, outputs=[download_button])
+        clear_btn.click(lambda: gr.update(visible=False), inputs=None, outputs=[download_button])
+
 
     with gr.Tab("Tentang Aplikasi"):
         gr.Markdown("""
@@ -365,10 +358,10 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo: # Using gr.Blocks for more contr
         * **SSIM (Structural Similarity Index Measure):** Mengevaluasi kesamaan antara dua gambar berdasarkan struktur, kontras, dan kecerahan. Nilai SSIM mendekati 1 menunjukkan kesamaan yang tinggi (kualitas lebih baik).
 
         ### Pengembang
-        Dibuat oleh Kelompok 6 Mata Kuliah Deep Learning ITS 2024/2025 menggunakan PyTorch dan Gradio.
+        Dibuat oleh Kelompok 6 Mata Kuliah Deep Learning ITS menggunakan PyTorch dan Gradio.
         """)
 
 # --- Jalankan Gradio ---
 if __name__ == "__main__":
     print("Memulai aplikasi Gradio...")
-    demo.launch(server_name="0.0.0.0", server_port=7861) # Ganti port jika perlu
+    demo.launch(server_name="0.0.0.0", server_port=7861)
