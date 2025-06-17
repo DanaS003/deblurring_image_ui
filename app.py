@@ -322,7 +322,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo: # Using gr.Blocks for more contr
     gr.Markdown(f"<h1 style='text-align: center;'>{title}</h1>")
     gr.Markdown(description)
 
-    with gr.Tab("Deblurring Ajaib"):
+    with gr.Tab("Deblurring"):
         with gr.Row():
             with gr.Column():
                 input_blur_img = gr.Image(type="pil", label="Gambar Buram (Input)", show_label=True)
@@ -365,7 +365,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo: # Using gr.Blocks for more contr
         * **SSIM (Structural Similarity Index Measure):** Mengevaluasi kesamaan antara dua gambar berdasarkan struktur, kontras, dan kecerahan. Nilai SSIM mendekati 1 menunjukkan kesamaan yang tinggi (kualitas lebih baik).
 
         ### Pengembang
-        Dibuat dengan ❤️ menggunakan PyTorch dan Gradio.
+        Dibuat oleh Kelompok 6 Mata Kuliah Deep Learning ITS 2024/2025 menggunakan PyTorch dan Gradio.
         """)
 
 # --- Jalankan Gradio ---
