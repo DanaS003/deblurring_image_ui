@@ -5,3 +5,5 @@ gradio
 Pillow
 scikit-image
 numpy
+natten 
+einops
